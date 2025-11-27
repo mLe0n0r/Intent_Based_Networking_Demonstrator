@@ -1,0 +1,55 @@
+sudo mn --topo linear,3
+
+====== Creating network ====== 
+*** Creating network
+*** Adding controller
+*** Adding hosts:
+h1 h2 h3 
+*** Adding switches:
+s1 s2 s3 
+*** Adding links:
+(h1, s1) (h2, s2) (h3, s3) (s2, s1) (s3, s2) 
+*** Configuring hosts
+h1 h2 h3 
+*** Starting controller
+
+*** Starting 3 switches
+s1 s2 s3 ...
+*** Starting CLI:
+
+====== nets ======
+h1 h1-eth0:s1-eth1
+h2 h2-eth0:s2-eth1
+h3 h3-eth0:s3-eth1
+s1 lo:  s1-eth1:h1-eth0 s1-eth2:s2-eth2
+s2 lo:  s2-eth1:h2-eth0 s2-eth2:s1-eth2 s2-eth3:s3-eth2
+s3 lo:  s3-eth1:h3-eth0 s3-eth2:s2-eth3
+
+====== pingall ======
+h1 -> h2 h3 
+h2 -> h1 h3 
+h3 -> h1 h2 
+Results: 0% dropped (6/6 received)
+
+====== ping ====== 
+h1 ping h2:
+10 packets transmitted, 10 received, 0% packet loss, time 9150ms
+rtt min/avg/max/mdev = 0.043/0.092/0.162/0.037 ms
+
+h1 ping h3:
+10 packets transmitted, 10 received, 0% packet loss, time 9204ms
+rtt min/avg/max/mdev = 0.051/0.140/0.500/0.123 ms
+
+h2 ping h3:
+10 packets transmitted, 10 received, 0% packet loss, time 9076ms
+rtt min/avg/max/mdev = 0.078/0.174/0.667/0.166 ms
+
+====== iperf ====== 
+TCP bandwidth between h1 and h2:
+Results: ['17.4 Gbits/sec', '17.5 Gbits/sec']
+
+TCP bandwidth between h1 and h3:
+Results: ['18.0 Gbits/sec', '18.0 Gbits/sec']
+
+TCP bandwidth between h2 and h3:
+Results: ['15.2 Gbits/sec', '15.3 Gbits/sec']
