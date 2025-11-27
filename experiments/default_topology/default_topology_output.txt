@@ -1,0 +1,29 @@
+*** Creating network
+*** Adding controller
+*** Adding hosts:
+h1 h2 
+*** Adding switches:
+s1 
+*** Adding links:
+(h1, s1) (h2, s1) 
+*** Configuring hosts
+h1 h2 
+*** Starting controller
+c0 
+*** Starting 1 switches
+s1 ...
+*** Starting CLI:
+mininet> h1 ping h2
+PING 10.0.0.2 (10.0.0.2) 56(84) bytes of data.
+64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=36.2 ms
+64 bytes from 10.0.0.2: icmp_seq=2 ttl=64 time=0.211 ms
+64 bytes from 10.0.0.2: icmp_seq=3 ttl=64 time=0.060 ms
+64 bytes from 10.0.0.2: icmp_seq=4 ttl=64 time=0.066 ms
+64 bytes from 10.0.0.2: icmp_seq=5 ttl=64 time=0.098 ms
+64 bytes from 10.0.0.2: icmp_seq=6 ttl=64 time=0.146 ms
+64 bytes from 10.0.0.2: icmp_seq=7 ttl=64 time=0.102 ms
+64 bytes from 10.0.0.2: icmp_seq=8 ttl=64 time=0.045 ms
+^C
+--- 10.0.0.2 ping statistics ---
+8 packets transmitted, 8 received, 0% packet loss, time 7068ms
+rtt min/avg/max/mdev = 0.045/4.620/36.235/11.949 ms
