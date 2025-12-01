@@ -5,43 +5,36 @@ from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4
 
-"""
-The controller must:
 
-1) Learn about the network
-   - Determine from which port each host enters the switch
-   - Discover where each destination host is located
-   - Use this information to forward packets correctly
+# The controller must:
 
-2) Apply intents
-   - Allow communication between selected hosts
-   - Block or isolate specific hosts
-   - Optionally prioritize certain traffic flows
+# 1) Learn about the network
+#    - Determine from which port each host enters the switch
+#    - Discover where each destination host is located
+#    - Use this information to forward packets correctly
 
-3) Install rules
-   - Forwarding rules for allowed traffic
-   - Drop rules for blocked traffic
-   - Priority rules for high-priority flows
-"""
+# 2) Apply intents
+#    - Allow communication between selected hosts
+#    - Block or isolate specific hosts
+#    - Optionally prioritize certain traffic flows
+
+# 3) Install rules
+#    - Forwarding rules for allowed traffic
+#    - Drop rules for blocked traffic
+#    - Priority rules for high-priority flows
+
 
 class IntentController(app_manager.RyuApp):
     OFP_VERSION = [ofproto_v1_3.OFP_VERSION] # OpenFlow version the controller is going to use
 
     def __init__(self, *args, **kwargs):
         super(IntentController, self).__init__(*args, **kwargs)
-        self.mac_and_port = {} # empty dictionary
+        self.mac_to_port = {} # empty dictionary
 
-        self.allowed_pairs = [ # h1 <-> h2
+        self.allowed_pairs = [ # 1) h1 <-> h2
             ("10.0.0.1", "10.0.0.2"),
             ("10.0.0.2", "10.0.0.1")
         ]
-
-    def allowed_communication(self, src_ip, dst_ip):
-        """
-        Returns true is the pair matches the defined allowed pair
-        """
-
-        return (src_ip, dst_ip) in self.allowed_pairs
 
     def learn_mac(self, dpid, src_mac, in_port):
         """
@@ -85,24 +78,71 @@ class IntentController(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=dp, buffer_id=msg.buffer_id, in_port=in_port, actions=actions, data=msg.data)
         dp.send_msg(out)
 
-    # @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER) # event handler
-    # def packet_in_handler(self, ev):
-    #     msg = ev.msg # OpenFlow that came from the switch
-    #     dp = msg.datapath
-    #     parser = dp.ofproto_parser # to send OpenFlow rule
-    #     ofp = dp.ofproto # OpenFlow constants
+    def add_flow(self, dp, priority, match, actions):
+        """
+        Creates a flow entry in the switch's table
 
-    #     dpid = dp.id
-    #     in_port = msg.match["in_port"]
+        Arguments:
+        dp: datapath
+        priority
+        match: what the switch must recognise
+        actions: what the switch must do
+        """
 
-    #     pkt = packet.Packet(msg.data)
-    #     eth = pkt.get_protocol(ethernet.ethernet)
-    #     ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        parser = dp.ofproto_parser
 
-    #     src_mac = eth.src
-    #     dst_mac = eth.dst
+        inst = [parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        flowMod = parser.OFPFlowMod(datapath=dp, priority=priority, match=match, instructions=inst)
+        dp.send_msg(flowMod)
 
-    #     self.learn_mac(dpid, src_mac, in_port)
+    # =================
+    #    Main Logic:
+    # =================
+    
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER) # event handler
+    def packet_in_handler(self, ev):
+        msg = ev.msg # OpenFlo message that came from the switch
+        dp = msg.datapath
+        parser = dp.ofproto_parser
+        ofp = dp.ofproto 
+
+        dpid = dp.id
+        in_port = msg.match["in_port"]
+
+        # parse packet
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        self.learn_mac(dpid, eth.src, in_port)
+
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt is None: # if not ipv4 flood
+            action = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+            self.send_packet(dp, msg, in_port, action)
+            return
+        
+        src_ip = ip_pkt.src
+        dst_ip = ip_pkt.dst
+        
+        # 1) Allow only communication between two specific hosts
+        if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
+            match = parser.OFPMatch(eth_type=0x800, ipv4_src=src_ip, ipv4_dst=dst_ip)
+            self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
+            return 
+            
+        out_port = self.get_out_port(dpid, eth.dst, dp)
+        actions = [parser.OFPActionOutput(out_port)] # send packet from the port out_port
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip) # aply the action to the respective packets
+
+        self.add_flow(dp, self.NORMAL_PRIORITY, match, actions)
+        self.send_packet(dp, msg, in_port, actions)
+        
+        
+
+
+
+        
+
 
          
 
