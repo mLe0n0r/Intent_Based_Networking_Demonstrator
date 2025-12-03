@@ -27,7 +27,7 @@ from ryu.lib.packet import arp
 
 class IntentController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION] # OpenFlow version the controller is going to use
-
+    
     def __init__(self, *args, **kwargs):
         super(IntentController, self).__init__(*args, **kwargs)
         self.mac_to_port = {} # empty dictionary
@@ -119,6 +119,51 @@ class IntentController(app_manager.RyuApp):
         flowMod = parser.OFPFlowMod(datapath=dp, priority=priority, match=match, instructions=inst)
         dp.send_msg(flowMod)
 
+    # ====== Intent methods ======
+
+    def limited_communication(self, dp, msg, src_ip, dst_ip):
+        """
+        Intent 1: Allow only communication between two specific hosts
+        """
+
+        parser = dp.ofproto_parser
+        if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
+            match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip)
+            self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
+            return True
+        return False
+        
+    def HTTP_priority(self, dp, msg, src_ip, dst_ip):
+        """
+        Intent 2: Prioritize HTTP traffic
+        """
+
+        dpid = dp.id
+        parser = dp.ofproto_parser
+        in_port = msg.match["in_port"]
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        if tcp_pkt and tcp_pkt.dst_port == 80: # if it is HTTP
+            out_port = self.get_out_port(dpid, eth.dst, dp)
+            actions = [parser.OFPActionOutput(out_port)]
+            match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, tcp_dst=80, ipv4_src=src_ip, ipv4_dst=dst_ip)
+
+            self.add_flow(dp, self.HTTP_PRIORITY, match, actions)
+            self.send_packet(dp, msg, in_port, actions)
+            return True
+        
+        return False
+
+    INTENT_HANDLERS = {
+        "specific_hosts": limited_communication, 
+        "http_priority": HTTP_priority,
+    }
+
+    ACTIVE_INTENT = "specific_hosts" # CHANGE THERE THE INTENT TO BE TESTED
+
     # =================
     #    Main Logic:
     # =================
@@ -161,25 +206,10 @@ class IntentController(app_manager.RyuApp):
         src_ip = ip_pkt.src
         dst_ip = ip_pkt.dst
         
-        # ================================================================
-        #   Uncomment the code corresponding to the intent to be tested:
-        # ================================================================
+        handler = self.INTENT_HANDLERS[self.ACTIVE_INTENT]
+        handled = handler(self, dp, msg, src_ip, dst_ip)
 
-        # 1) Allow only communication between two specific hosts
-        # if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
-        #     match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip)
-        #     self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
-        #     return 
-
-        # 2) Prioritize HTTP traffic
-        tcp_pkt = pkt.get_protocol(tcp.tcp)
-        if tcp_pkt and tcp_pkt.dst_port == 80: # if it is HTTP
-            out_port = self.get_out_port(dpid, eth.dst, dp)
-            actions = [parser.OFPActionOutput(out_port)]
-            match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, tcp_dst=80, ipv4_src=src_ip, ipv4_dst=dst_ip)
-
-            self.add_flow(dp, self.HTTP_PRIORITY, match, actions)
-            self.send_packet(dp, msg, in_port, actions)
+        if handled:
             return
 
         out_port = self.get_out_port(dpid, eth.dst, dp)
