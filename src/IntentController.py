@@ -50,7 +50,6 @@ class IntentController(app_manager.RyuApp):
         src_mac: Mac address of destination
         in_port: switch port from where the packet arrived
         """
-
         self.mac_to_port.setdefault(dpid, {})
         self.mac_to_port[dpid][src_mac] = in_port
 
@@ -63,7 +62,6 @@ class IntentController(app_manager.RyuApp):
         dst_mac: Mac address of destination
         dp: datapath (represents the switch)
         """
-
         if dst_mac in self.mac_to_port.get(dpid, {}):
             return self.mac_to_port[dpid][dst_mac] # if it had already learnt the destination's mac port
         return dp.ofproto.OFPP_FLOOD # else flood (sents to every port excluding the one from where it arrived)
@@ -78,7 +76,6 @@ class IntentController(app_manager.RyuApp):
         in_port: switch port from where the packet arrived
         actions: list of action that should be applied to the packet
         """
-    
         parser = dp.ofproto_parser # to send OpenFlow rule
         out = parser.OFPPacketOut(datapath=dp, buffer_id=msg.buffer_id, in_port=in_port, actions=actions, data=msg.data)
         dp.send_msg(out)
@@ -91,9 +88,11 @@ class IntentController(app_manager.RyuApp):
         Argument:
         ev: event that contains the OpenFlow message sent by the switch
         """
-
         dp = ev.msg.datapath
         parser = dp.ofproto_parser
+
+        if self.ACTIVE_INTENT == "limited_bandwidth":
+            self.create_meter(dp, meter_id=1, rate=10000) # bandwidth limited to 10Mbps
 
         match = parser.OFPMatch() # can consider anything
         actions = [parser.OFPActionOutput(dp.ofproto.OFPP_CONTROLLER, dp.ofproto.OFPCML_NO_BUFFER)] # any packet is going to be sent to the controller
@@ -112,12 +111,22 @@ class IntentController(app_manager.RyuApp):
         match: what the switch must recognise
         actions: what the switch must do
         """
-
         parser = dp.ofproto_parser
 
         inst = [parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
         flowMod = parser.OFPFlowMod(datapath=dp, priority=priority, match=match, instructions=inst)
         dp.send_msg(flowMod)
+
+    def create_meter(self, dp, meter_id, rate):
+        """
+        Create a meter that limits bandwidth
+        """
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
+
+        bands = [parser.OFPMeterBandDrop(rate=rate, burst_size=rate)]
+        meter_mod = parser.OFPMeterMod(datapath=dp, command=ofp.OFPMC_ADD, flags=ofp.OFPMF_KBPS, meter_id=meter_id, bands=bands)
+        dp.send_msg(meter_mod)
 
     # ====== Intent methods ======
 
@@ -157,12 +166,41 @@ class IntentController(app_manager.RyuApp):
         
         return False
 
+    def limited_bandwidth(self, dp, msg, src_ip, dst_ip):
+        """
+        Intent 3: Limit bandwidth between two hosts
+        """
+        host_1 = "10.0.0.1"
+        host_3 = "10.0.0.3"
+
+        if (src_ip == host_1 and dst_ip == host_3) or (src_ip == host_3 and dst_ip == host_1):
+            in_port = msg.match["in_port"]
+            parser = dp.ofproto_parser
+
+            pkt = packet.Packet(msg.data)
+            eth = pkt.get_protocol(ethernet.ethernet)
+            
+            out_port = self.get_out_port(dp.id, eth.dst, dp)
+            actions = [parser.OFPActionOutput(out_port)]
+
+            match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, ipv4_src=src_ip, ipv4_dst=dst_ip)
+            inst = [parser.OFPInstructionMeter(1), parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
+            flow = parser.OFPFlowMod(datapath=dp, priority=50, match=match, instructions=inst)
+            dp.send_msg(flow)
+
+            self.send_packet(dp, msg, in_port, actions)
+            return True
+        
+        return False
+
+
     INTENT_HANDLERS = {
         "specific_hosts": limited_communication, 
         "http_priority": HTTP_priority,
+        "limited_bandwidth": limited_bandwidth,
     }
 
-    ACTIVE_INTENT = "specific_hosts" # CHANGE THERE THE INTENT TO BE TESTED
+    ACTIVE_INTENT = "limited_bandwidth" # CHANGE THERE THE INTENT TO BE TESTED
 
     # =================
     #    Main Logic:
