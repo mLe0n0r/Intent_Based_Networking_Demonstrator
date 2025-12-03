@@ -3,7 +3,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4
+from ryu.lib.packet import packet, ethernet, ipv4, tcp
 from ryu.lib.packet import arp
 
 
@@ -32,8 +32,9 @@ class IntentController(app_manager.RyuApp):
         super(IntentController, self).__init__(*args, **kwargs)
         self.mac_to_port = {} # empty dictionary
 
-        self.BLOCK_PRIORITY = 20 # in doubt is better to block
+        self.BLOCK_PRIORITY = 30 # in doubt is better to block
         self.NORMAL_PRIORITY = 10
+        self.HTTP_PRIORITY = 20
 
         self.allowed_pairs = [ # 1) h1 <-> h2
             ("10.0.0.1", "10.0.0.2"),
@@ -92,7 +93,7 @@ class IntentController(app_manager.RyuApp):
         """
 
         dp = ev.msg.datapath
-        parser = dp.ofproto.ofproto_parser
+        parser = dp.ofproto_parser
 
         match = parser.OFPMatch() # can consider anything
         actions = [parser.OFPActionOutput(dp.ofproto.OFPP_CONTROLLER, dp.ofproto.OFPCML_NO_BUFFER)] # any packet is going to be sent to the controller
@@ -160,12 +161,27 @@ class IntentController(app_manager.RyuApp):
         src_ip = ip_pkt.src
         dst_ip = ip_pkt.dst
         
+        # ================================================================
+        #   Uncomment the code corresponding to the intent to be tested:
+        # ================================================================
+
         # 1) Allow only communication between two specific hosts
-        if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
-            match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip)
-            self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
-            return 
-            
+        # if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
+        #     match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip)
+        #     self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
+        #     return 
+
+        # 2) Prioritize HTTP traffic
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        if tcp_pkt and tcp_pkt.dst_port == 80: # if it is HTTP
+            out_port = self.get_out_port(dpid, eth.dst, dp)
+            actions = [parser.OFPActionOutput(out_port)]
+            match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, tcp_dst=80, ipv4_src=src_ip, ipv4_dst=dst_ip)
+
+            self.add_flow(dp, self.HTTP_PRIORITY, match, actions)
+            self.send_packet(dp, msg, in_port, actions)
+            return
+
         out_port = self.get_out_port(dpid, eth.dst, dp)
         actions = [parser.OFPActionOutput(out_port)] # send packet from the port out_port
         match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip) # aply the action to the respective packets
