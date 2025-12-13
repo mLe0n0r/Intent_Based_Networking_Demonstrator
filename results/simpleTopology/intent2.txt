@@ -1,0 +1,35 @@
+2) Prioritize HTTP traffic
+Node h1 - HTTP Server: python3 -m http.server 80
+Node h2 - Non-HTTP traffic congestion generator: iperf -c 10.0.0.3 -t 100
+node h2 - HTTP Client: curl http://10.0.0.1
+node h3 - Normal Server: iperf -s
+
+Node h1:
+Serving HTTP on 0.0.0.0 port 80 (http://0.0.0.0:80/) ...
+10.0.0.2 - - [03/Dec/2025 12:34:25] "GET / HTTP/1.1" 200 -
+10.0.0.2 - - [03/Dec/2025 12:34:35] "GET / HTTP/1.1" 200 -
+10.0.0.2 - - [03/Dec/2025 12:34:42] "GET / HTTP/1.1" 200 -
+10.0.0.2 - - [03/Dec/2025 12:34:50] "GET / HTTP/1.1" 200 -
+10.0.0.2 - - [03/Dec/2025 12:34:52] "GET / HTTP/1.1" 200 -
+
+Node h2 - Congestion generator:
+-----------------------------------------------------------
+Client connecting to 10.0.0.3, TCP port 5001
+TCP window size: 170 KByte (default)
+-----------------------------------------------------------
+[  5] local 10.0.0.2 port 41966 connected with 10.0.0.3 port 5001
+[ ID] Interval           Transfer     Bandwidth
+[  5] 0.0-100.0 sec      197 GBytes   16.9 Gbits/sec
+
+Node h3:
+-----------------------------------------------------------
+Server listening on TCP port 5001
+TCP window size: 85.3 KByte (default)
+-----------------------------------------------------------
+[  6] local 10.0.0.3 port 5001 connected with 10.0.0.2 port 58502
+[ ID] Interval           Transfer     Bandwidth
+[  6] 0.0-20.0sec        41.9 GBytes  18.0 Gbits/sec
+[  6] local 10.0.0.3 port 5001 connected with 10.0.0.2 port 52686
+[  6] 0.0-20.0sec        46.7 GBytes  20.0 Gbits/sec 
+[  6] local 10.0.0.3 port 5001 connected with 10.0.0.2 port 41966
+[  6] 0.0-20.0sec        197 GBytes   17.0 Gbits/sec 
