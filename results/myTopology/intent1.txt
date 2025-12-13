@@ -1,0 +1,9 @@
+1) Allow only communication between h1 and h2
+*** Ping: testing ping reachability
+h1 -> h2 X X X
+h2 -> h1 X X X
+h3 -> X X X X
+h4 -> X X X X
+h5 -> X X X X
+
+*** Results: 90% dropped (2/20 received)

@@ -1,0 +1,39 @@
+3) Limit bandwidth between hosts 1 and 3
+
+Node h1 - Server: iperf -s
+-----------------------------------------------------------
+Server listening on TCP port 5001
+TCP window size: 85.3 KByte (default)
+-----------------------------------------------------------
+[  6] local 10.0.0.1 port 5001 connected with 10.0.0.3 port 51254
+[ ID] Interval           Transfer     Bandwidth
+[  6] 0.0-10.8sec        13.8 MBytes  10.7 Mbits/sec
+
+Node h3 - Client: iperf -c 10.0.0.1 -t 10
+-----------------------------------------------------------
+Client connecting to 10.0.0.1, TCP port 5001
+TCP window size: 110 KByte (default)
+-----------------------------------------------------------
+[  5] local 10.0.0.3 port 58134 connected with 10.0.0.1 port 5001
+[ ID] Interval           Transfer     Bandwidth
+[  5] 0.0-10.1 sec       13.8 MBytes  11.4 Mbits/sec
+
+====================================================================
+
+Node h3 - Server: iperf -s
+-----------------------------------------------------------
+Server listening on TCP port 5001
+TCP window size: 85.3 KByte (default)
+-----------------------------------------------------------
+[  6] local 10.0.0.3 port 5001 connected with 10.0.0.2 port 37928
+[ ID] Interval           Transfer     Bandwidth
+[  6] 0.0-10.1sec        11.1 Gbytes  9.46 Gbits/sec
+
+Node h2 - Client: iperf -c 10.0.0.3 -t 10
+-----------------------------------------------------------
+Client connecting to 10.0.0.3, TCP port 5001
+TCP window size: 85.3 Kbytes (default)
+-----------------------------------------------------------
+[  5] local 10.0.0.2 port 37928 connected with 10.0.0.3 port 5001
+[ ID] Interval           Transfer     Bandwidth
+[  5] 0.0-10.0 sec       11.1 GBytes  9.49 Gbits/sec
