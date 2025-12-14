@@ -6,6 +6,9 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, tcp
 from ryu.lib.packet import arp
 import time
+from ryu.lib.packet import icmp
+from ryu.lib.packet import packet
+
 
 
 # The controller must:
@@ -32,15 +35,17 @@ class IntentController(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(IntentController, self).__init__(*args, **kwargs)
         self.mac_to_port = {} # empty dictionary
+        self.host_contacts = {}      
+        self.blocked_hosts = {}  
+        self.scan_counter = {}  
 
         self.BLOCK_PRIORITY = 30 # in doubt is better to block
         self.NORMAL_PRIORITY = 10
         self.HTTP_PRIORITY = 20
-
-        self.host_contacts = {}      
-        self.blocked_hosts = {}     
-        self.SCAN_THRESHOLD = 5     
-        self.BLOCK_TIME = 15       
+  
+        self.SCAN_THRESHOLD = 3 
+        self.BLOCK_TIME = 15  
+        self.SCAN_WINDOW = 10     
 
         self.allowed_pairs = [ # 1) h1 <-> h2
             ("10.0.0.1", "10.0.0.2"),
@@ -201,7 +206,12 @@ class IntentController(app_manager.RyuApp):
         """
         Intent 4: Temporarily block hosts that contact too much in a short period of time
         """
+        pkt = packet.Packet(msg.data)
+        icmp_pkt = pkt.get_protocol(icmp.icmp)
 
+        if icmp_pkt and icmp_pkt.type != 8:  # Echo Request
+            return False
+    
         now = time.time()
 
         if src_ip in self.blocked_hosts:
@@ -211,13 +221,28 @@ class IntentController(app_manager.RyuApp):
                 del self.blocked_hosts[src_ip]
                 self.scan_counter.pop(src_ip, None)
 
-        self.scan_counter.setdefault(src_ip, set()).add(dst_ip)
+        self.scan_counter.setdefault(src_ip, [])
 
-        if len(self.scan_counter[src_ip]) >= self.SCAN_THRESHOLD:
+        self.scan_counter[src_ip].append((dst_ip, now))
+
+        # Remove contacts outside the time window
+        self.scan_counter[src_ip] = [
+            (dst, t) for dst, t in self.scan_counter[src_ip]
+            if now - t <= self.SCAN_WINDOW
+        ]
+
+        # Count distinct destinations in the window
+        distinct_dsts = {dst for dst, _ in self.scan_counter[src_ip]}
+
+        if len(distinct_dsts) >= self.SCAN_THRESHOLD:
             self.blocked_hosts[src_ip] = now
-            return True 
+            self.scan_counter.pop(src_ip, None)
+            return True
 
         return False 
+
+    def no_intent(self, dp, msg, src_ip, dst_ip):
+        return False
 
 
     INTENT_HANDLERS = {
@@ -225,6 +250,7 @@ class IntentController(app_manager.RyuApp):
         "http_priority": HTTP_priority,
         "bandwidth": limited_bandwidth,
         "scan": scan_detection,
+        "none": no_intent,
     }
 
     ACTIVE_INTENT = "scan" # CHANGE HERE THE INTENT TO BE TESTED
@@ -270,9 +296,6 @@ class IntentController(app_manager.RyuApp):
         
         src_ip = ip_pkt.src
         dst_ip = ip_pkt.dst
-
-        if src_ip in self.blocked_hosts:
-            return
 
         # Handle intents:
         handler = self.INTENT_HANDLERS[self.ACTIVE_INTENT]
