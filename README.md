@@ -12,8 +12,13 @@ The system is built with Ryu (OpenFlow 1.3) and Mininet, and showcases how high-
 4) **Scan Detection:** Detects hosts that contact too many distinct destinations in a short period of time and temporarily blocks them.
 
 ## Topologies
+SimpleTopology.py:
 
+<img src="images/simpleTopology.png" width="40%">
 
+MyTopology.py:
+
+<img src="images/3switchs_5hosts.png" width="80%">
 
 ## ▶️ How to run
 Start the Controller:
