@@ -5,6 +5,7 @@ from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, tcp
 from ryu.lib.packet import arp
+import time
 
 
 # The controller must:
@@ -35,6 +36,11 @@ class IntentController(app_manager.RyuApp):
         self.BLOCK_PRIORITY = 30 # in doubt is better to block
         self.NORMAL_PRIORITY = 10
         self.HTTP_PRIORITY = 20
+
+        self.host_contacts = {}      
+        self.blocked_hosts = {}     
+        self.SCAN_THRESHOLD = 5     
+        self.BLOCK_TIME = 15       
 
         self.allowed_pairs = [ # 1) h1 <-> h2
             ("10.0.0.1", "10.0.0.2"),
@@ -101,7 +107,7 @@ class IntentController(app_manager.RyuApp):
         mod = parser.OFPFlowMod(datapath=dp, priority=0, match=match, instructions=inst) # FlowMod message
         dp.send_msg(mod)
 
-    def add_flow(self, dp, priority, match, actions):
+    def add_flow(self, dp, priority, match, actions, idle_timeout):
         """
         Creates a flow entry in the switch's table
 
@@ -114,7 +120,7 @@ class IntentController(app_manager.RyuApp):
         parser = dp.ofproto_parser
 
         inst = [parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        flowMod = parser.OFPFlowMod(datapath=dp, priority=priority, match=match, instructions=inst)
+        flowMod = parser.OFPFlowMod(datapath=dp, priority=priority, match=match, instructions=inst, idle_timeout=idle_timeout)
         dp.send_msg(flowMod)
 
     def create_meter(self, dp, meter_id, rate):
@@ -134,11 +140,10 @@ class IntentController(app_manager.RyuApp):
         """
         Intent 1: Allow only communication between two specific hosts
         """
-
         parser = dp.ofproto_parser
         if (src_ip, dst_ip) not in self.allowed_pairs: # -> block
             match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip)
-            self.add_flow(dp, self.BLOCK_PRIORITY, match, [])
+            self.add_flow(dp, self.BLOCK_PRIORITY, match, [], idle_timeout=5)
             return True
         return False
         
@@ -146,7 +151,6 @@ class IntentController(app_manager.RyuApp):
         """
         Intent 2: Prioritize HTTP traffic
         """
-
         dpid = dp.id
         parser = dp.ofproto_parser
         in_port = msg.match["in_port"]
@@ -160,7 +164,7 @@ class IntentController(app_manager.RyuApp):
             actions = [parser.OFPActionOutput(out_port)]
             match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, tcp_dst=80, ipv4_src=src_ip, ipv4_dst=dst_ip)
 
-            self.add_flow(dp, self.HTTP_PRIORITY, match, actions)
+            self.add_flow(dp, self.HTTP_PRIORITY, match, actions, idle_timeout=5)
             self.send_packet(dp, msg, in_port, actions)
             return True
         
@@ -185,22 +189,45 @@ class IntentController(app_manager.RyuApp):
 
             match = parser.OFPMatch(eth_type=0x0800, ip_proto=6, ipv4_src=src_ip, ipv4_dst=dst_ip)
             inst = [parser.OFPInstructionMeter(1), parser.OFPInstructionActions(dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
-            flow = parser.OFPFlowMod(datapath=dp, priority=50, match=match, instructions=inst)
+            flow = parser.OFPFlowMod(datapath=dp, priority=5, match=match, instructions=inst)
             dp.send_msg(flow)
 
             self.send_packet(dp, msg, in_port, actions)
             return True
         
         return False
+    
+    def scan_detection(self, dp, msg, src_ip, dst_ip):
+        """
+        Intent 4: Temporarily block hosts that contact too much in a short period of time
+        """
+
+        now = time.time()
+
+        if src_ip in self.blocked_hosts:
+            if now - self.blocked_hosts[src_ip] < self.BLOCK_TIME:
+                return True  
+            else:
+                del self.blocked_hosts[src_ip]
+                self.scan_counter.pop(src_ip, None)
+
+        self.scan_counter.setdefault(src_ip, set()).add(dst_ip)
+
+        if len(self.scan_counter[src_ip]) >= self.SCAN_THRESHOLD:
+            self.blocked_hosts[src_ip] = now
+            return True 
+
+        return False 
 
 
     INTENT_HANDLERS = {
         "specific_hosts": limited_communication, 
         "http_priority": HTTP_priority,
-        "limited_bandwidth": limited_bandwidth,
+        "bandwidth": limited_bandwidth,
+        "scan": scan_detection,
     }
 
-    ACTIVE_INTENT = "limited_bandwidth" # CHANGE THERE THE INTENT TO BE TESTED
+    ACTIVE_INTENT = "scan" # CHANGE HERE THE INTENT TO BE TESTED
 
     # =================
     #    Main Logic:
@@ -229,7 +256,7 @@ class IntentController(app_manager.RyuApp):
             actions = [parser.OFPActionOutput(out_port)]
 
             match = parser.OFPMatch(eth_type=0x0806, arp_spa=arp_pkt.src_ip, arp_tpa=arp_pkt.dst_ip)
-            self.add_flow(dp, self.NORMAL_PRIORITY, match, actions)
+            self.add_flow(dp, self.NORMAL_PRIORITY, match, actions, idle_timeout=5)
 
             self.send_packet(dp, msg, in_port, actions)
             return
@@ -243,18 +270,23 @@ class IntentController(app_manager.RyuApp):
         
         src_ip = ip_pkt.src
         dst_ip = ip_pkt.dst
-        
+
+        if src_ip in self.blocked_hosts:
+            return
+
+        # Handle intents:
         handler = self.INTENT_HANDLERS[self.ACTIVE_INTENT]
         handled = handler(self, dp, msg, src_ip, dst_ip)
 
         if handled:
             return
 
+        # Handle normal packets
         out_port = self.get_out_port(dpid, eth.dst, dp)
         actions = [parser.OFPActionOutput(out_port)] # send packet from the port out_port
         match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip, ipv4_dst=dst_ip) # aply the action to the respective packets
 
-        self.add_flow(dp, self.NORMAL_PRIORITY, match, actions)
+        self.add_flow(dp, self.NORMAL_PRIORITY, match, actions, idle_timeout=5)
         self.send_packet(dp, msg, in_port, actions)
         
         
